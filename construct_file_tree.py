@@ -340,7 +340,7 @@ def printProgressBar(iteration, total, prefix="", suffix="", decimals=1,
     if iteration == total: 
         print()
 
-if __name__ == "__main__":
+def resolve_cmdline_args():
     signal.signal(signal.SIGINT, signal_handler)
 
     parser = argparse.ArgumentParser(
@@ -356,20 +356,38 @@ if __name__ == "__main__":
     parser.add_argument('--debug', dest='debug', action='store_true', help='print debug output')
     args = parser.parse_args()
 
-    default_arg_file = os.path.expanduser("~/.construct_remarkable.ini")
+    # Pull default values from ~/.remarkable_params.sh
+    default_arg_file = os.path.expanduser("~/.remarkable_params.sh")
     if os.path.isfile(default_arg_file):
-        config = configparser.ConfigParser()
-        config.read(default_arg_file)
-        defaults = dict(config['default'])
-
-        args_dict = vars(args)
-        args_dict.update({k: v for k, v in defaults.items() if args_dict[k] is None})
+        with open(default_arg_file) as f:
+            for line in f.readlines():
+                if line.startswith("LOCAL_COPY_DIR") and args.source_dir is None:
+                    args.source_dir = line.strip().split("=")[1]
+                if line.startswith("DEST_DIR") and args.dest_dir is None:
+                    args.dest_dir = line.strip().split("=")[1]
 
     if args.debug:
         print("===== Args =========")
         for k, v in vars(args).items():
             print(f"{k:<10}\t{v}")
         print("====================")
+
+    invalid_args = False
+    if args.source_dir is None:
+        print("You must specify a source diractory or list it in your ~/.remarkable_params.sh file")
+        invalid_args = True
+    if args.dest_dir is None:
+        print("You must specify a destination directory file or list it in your " +\
+                "~/.remarkable_params.sh file")
+        invalid_args = True
+
+    if invalid_args:
+        exit(1)
+    
+    return args
+
+if __name__ == "__main__":
+    args = resolve_cmdline_args()
 
     node_dict = get_node_dict(args.source_dir)
     root = make_graph(node_dict)
