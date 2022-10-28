@@ -2,6 +2,8 @@
 
 # TODO : GraphNode changes (plus rename to 'RemarkableTreeNode' or something like this...)
 # TODO : add support for remote source (i.e., the remarkable...)
+# TODO (More important!) Log lastModified time when creating files to avoid creating
+#      files which had their metadata changed, but nothing else [i.e., only modified]
 
 import json, sys, os, signal, argparse, configparser, time
 import rmrl
@@ -361,9 +363,9 @@ def resolve_cmdline_args():
     if os.path.isfile(default_arg_file):
         with open(default_arg_file) as f:
             for line in f.readlines():
-                if line.startswith("LOCAL_COPY_DIR") and args.source_dir is None:
+                if line.startswith("RMKBL_LOCAL_DIR") and args.source_dir is None:
                     args.source_dir = line.strip().split("=")[1]
-                if line.startswith("DEST_DIR") and args.dest_dir is None:
+                if line.startswith("RMKBL_FILE_DIR") and args.dest_dir is None:
                     args.dest_dir = line.strip().split("=")[1]
 
     if args.debug:
