@@ -2,8 +2,6 @@
 
 # TODO : GraphNode changes (plus rename to 'RemarkableTreeNode' or something like this...)
 # TODO : add support for remote source (i.e., the remarkable...)
-# TODO (More important!) Log lastModified time when creating files to avoid creating
-#      files which had their metadata changed, but nothing else [i.e., only modified]
 
 import json, sys, os, signal, argparse, configparser, time
 import rmrl
@@ -300,6 +298,11 @@ def create_pdfs(fileinfo_to_create):
     """
     Creates the pdfs given the list of fileinfo, printing out a progress bar throughout.
     """
+
+    # TODO : log lastModified time from src_id.metadata file when creating to avoid 
+    # creating files which have only been accessed since last created (which changes
+    # their metadata file).
+
     num_files = len(fileinfo_to_create)
     files_completed = 0
     for pdf, err, src_id in fileinfo_to_create:
