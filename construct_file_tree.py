@@ -4,6 +4,7 @@
 # TODO : add support for remote source (i.e., the remarkable...)
 
 import json, sys, os, signal, argparse, configparser, time
+import subprocess
 import rmrl
 
 class GraphNode:
@@ -175,11 +176,13 @@ class GraphNode:
                 src_id = f"{source_dir}/{self.__id}"
                 src_md = f"{src_id}.metadata"
 
-                # Script: check if pdf doesn't exist or metadata file is newer
+                # Script: check if pdf doesn't exist or metadata file is newer -- update this with better check...
                 script = f"PROCESS=0; if [ ! -s {pdf} ] || [ {src_md} -nt {pdf} ]; then PROCESS=1; fi; exit $PROCESS"
 
+                num_pages = int(subprocess.check_output(f"ls {src_id} | wc -l", shell=True)) // 2
+
                 if os.system(script):
-                    fileinfo_to_create.append((pdf, err, src_id))
+                    fileinfo_to_create.append((pdf, err, src_id, num_pages))
 
             else:
                 # This represents a directory
@@ -294,6 +297,9 @@ def make_graph(node_dict):
 
     return root
 
+def get_time_str(time):
+    return f"{time/3600:.0f}h{(time%3600)/60:02.0f}m{time%60:04.1f}s"
+
 def create_pdfs(fileinfo_to_create):
     """
     Creates the pdfs given the list of fileinfo, printing out a progress bar throughout.
@@ -305,17 +311,39 @@ def create_pdfs(fileinfo_to_create):
 
     num_files = len(fileinfo_to_create)
     files_completed = 0
-    for pdf, err, src_id in fileinfo_to_create:
+    num_pages_gend = 0
+
+    total_num_pages = 0
+    for pdf, err, src_id, num_pages in fileinfo_to_create:
+        total_num_pages += num_pages
+
+    start_time = time.time()
+    for pdf, err, src_id, num_pages in fileinfo_to_create:
         pdf_str = os.path.basename(pdf)[:20] + "..."
 
         def rmrl_cb(percentage):
-            printProgressBar(files_completed*100 + percentage, num_files*100, prefix=f"{pdf_str:23}", length=100-23)
+            est_num_pages_gend = num_pages_gend + int(num_pages*percentage/100.0)
+            if est_num_pages_gend < 100:
+                est_time_per_page = 0.7
+            else:
+                est_time_per_page = (time.time() - start_time)/est_num_pages_gend
+
+            etr = (total_num_pages - est_num_pages_gend)*est_time_per_page
+            etr_str = get_time_str(etr)
+
+            printProgressBar(est_num_pages_gend, total_num_pages, prefix=f"{pdf_str:23} (ETR: {etr_str})", length=75-len(etr_str))
 
         output = rmrl.render(src_id, progress_cb=rmrl_cb)
         with open(pdf, "wb") as f:
             f.write(output.read())
 
+        #new_pages_gend = int(subprocess.check_output(f"pdfinfo {pdf} | grep Pages | sed 's/[^0-9]*//'", shell=True))
+        #total_pages_gend += new_pages_gend
+        num_pages_gend += num_pages
+
         files_completed += 1
+
+    return num_pages_gend, time.time() - start_time
 
 def signal_handler(signal, frame):
     sys.exit(0)
@@ -407,15 +435,14 @@ if __name__ == "__main__":
     files_to_create = root.create_structure(args.source_dir, args.dest_dir, args.debug or args.verbose)
     num_files = len(files_to_create)
 
-    start_time = time.time()
-    create_pdfs(files_to_create)
-    elapsed_time = time.time() - start_time
+    num_pages, elapsed_time = create_pdfs(files_to_create)
 
     if args.sync or args.sync_warn:
         root.delete_extra_files(args.dest_dir, args.verbose, args.sync_warn)
 
     if num_files > 0:
-        print(f"{num_files} pdfs created in {elapsed_time:.1f}s")
+        time_per_page = elapsed_time / num_pages
+        print(f"{num_files} pdfs ({num_pages} pages) created in {get_time_str(elapsed_time)} (~{time_per_page:.1f}s per page)")
     else:
         print("No files to create!")
 
