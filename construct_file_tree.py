@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-
 # TODO : GraphNode changes (plus rename to 'RemarkableTreeNode' or something like this...)
 # TODO : add support for remote source (i.e., the remarkable...)
 
@@ -25,6 +24,8 @@ class GraphNode:
         identifier of this file object's parent
     __parent : GraphNode
         parent node
+    __last_modified : int
+        integer representing the last time when the remarkable document was last modified
 
     Methods
     -------
@@ -47,8 +48,9 @@ class GraphNode:
     __deleted = None
     __parent_id = None
     __parent = None
+    __last_modified = None
 
-    def __init__(self, _id, _name, _type_str, _deleted, _parent_id):
+    def __init__(self, _id, _name, _type_str, _deleted, _parent_id, _last_modified=None):
         """
         Parameters
         ----------
@@ -62,6 +64,8 @@ class GraphNode:
             string/bool indicating whether this node has been deleted ('deleted' field in <_id>.metadata)
         _parent_id : str
             id of this node's parent
+        _last_modified : int
+            time when the remarkable file was last modified
         """
         self.__id = _id
         self.__name = _name
@@ -76,6 +80,7 @@ class GraphNode:
     
         self.__deleted = _deleted not in (False, "false", "False")
         self.__parent_id = _parent_id
+        self.__last_modified = _last_modified
 
     def get_parent_id(self):
         return self.__parent_id
@@ -138,11 +143,10 @@ class GraphNode:
 
         return out_str
 
-    def create_structure(self, source_dir, dest_dir, verbose=False):
+    def create_structure(self, source_dir, dest_dir, verbose=False, time_ref=None):
         """
         Traverses tree and creates a model of the (displayed) filesystem on the remarkable.
 
-        TODO: delete files/directories which are not modeled in current remarkable directory
         TODO: add functionality for different tools (and review rmrl capabilities)
 
         Parameters
@@ -177,11 +181,17 @@ class GraphNode:
                 src_md = f"{src_id}.metadata"
 
                 # Script: check if pdf doesn't exist or metadata file is newer -- update this with better check...
-                script = f"PROCESS=0; if [ ! -s {pdf} ] || [ {src_md} -nt {pdf} ]; then PROCESS=1; fi; exit $PROCESS"
+                if (time_ref is None) or (self.__last_modified is None) or (self.__id not in time_ref.keys()):
+                    script = f"PROCESS=0; if [ ! -s {pdf} ] || [ {src_md} -nt {pdf} ]; then PROCESS=1; fi; exit $PROCESS"
+                    update = os.system(script)
+                else:
+                    update = time_ref[self.__id] > self.__last_modified
 
-                num_pages = int(subprocess.check_output(f"ls {src_id} | wc -l", shell=True)) // 2
+                if time_ref is not None:
+                    time_ref[self.__id] = self.__last_modified
 
-                if os.system(script):
+                if update:
+                    num_pages = int(subprocess.check_output(f"ls {src_id} | wc -l", shell=True) / 2)
                     fileinfo_to_create.append((pdf, err, src_id, num_pages))
 
             else:
@@ -196,22 +206,37 @@ class GraphNode:
                     os.system("mkdir %s" % (new_dir))
 
                 for child in self.__children:
-                    fileinfo_to_create.extend(child.create_structure(source_dir, new_dir))
+                    fileinfo_to_create.extend(child.create_structure(source_dir, new_dir, verbose, time_ref))
+
         return fileinfo_to_create
 
     def delete_extra_files(self, dirname, verbose=False, warn_only=False):
+        """
+        Deletes extra files in dest folder.
+
+        Parameters
+        ----------
+        dirname : str
+            Directory of filesystem where we expect to find the children of this node
+        verbose : bool
+            If true prints info about each deletion
+        warn_only : bool
+            If true, only prints which files would be deleted
+        """
         if self.__children is not None:
             filenames = os.listdir(dirname)
             for f_name in filenames:
-                found=0
-                for child in self.__children:
-                    if child.__name == f_name.split('.')[0]:
-                        found=1
-                        break
+                f_basename = f_name.split('.')[0]
+
+                i=0
+                while i < len(self.__children) and self.__children[i].__name != f_basename:
+                    i+= 1
+                found = i < len(self.__children)
 
                 if not found:
                     if verbose:
                         print(f"Removing {f_name}... in {dirname}")
+
                     if warn_only:
                         print(f"Would remove {f_name} in {dirname}")
                     else:
@@ -247,7 +272,7 @@ def construct_node(ident, source_dir):
     meta_data = json.loads(data)
 
     return GraphNode(ident, meta_data['visibleName'].replace(' ', '_'), meta_data['type'],
-            meta_data['deleted'], meta_data['parent'])
+            meta_data['deleted'], meta_data['parent'], int(meta_data['lastModified']))
 
 def get_node_dict(source_dir):
     """
@@ -263,10 +288,8 @@ def get_node_dict(source_dir):
 
     for name in os.listdir(source_dir):
         ident = os.path.basename(name).split('.')[0]
-        if ident not in node_dict:
+        if len(ident) > 0 and ident not in node_dict:
             node_dict[ident] = construct_node(ident, source_dir)
-
-    TOTAL_FILE_OBJ = len(node_dict.keys())
 
     return node_dict
 
@@ -305,10 +328,6 @@ def create_pdfs(fileinfo_to_create):
     Creates the pdfs given the list of fileinfo, printing out a progress bar throughout.
     """
 
-    # TODO : log lastModified time from src_id.metadata file when creating to avoid 
-    # creating files which have only been accessed since last created (which changes
-    # their metadata file).
-
     num_files = len(fileinfo_to_create)
     files_completed = 0
     num_pages_gend = 0
@@ -344,6 +363,20 @@ def create_pdfs(fileinfo_to_create):
         files_completed += 1
 
     return num_pages_gend, time.time() - start_time
+
+def read_time_file(f_name):
+    time_ref = {}
+    
+    if os.path.isfile(f_name):
+        with open(f_name) as f:    
+            data = f.read()
+            time_ref = json.loads(data)
+
+    return time_ref
+
+def write_time_file(time_ref, f_name):
+    with open(f_name, "w") as f:
+        json.dump(time_ref, f, indent="")
 
 def signal_handler(signal, frame):
     sys.exit(0)
@@ -385,6 +418,8 @@ def resolve_cmdline_args():
     parser.add_argument('--sync', action='store_true', dest='sync', help="deletes extra files in dest_dir")
     parser.add_argument('--sync_warn', action='store_true', dest='sync_warn',
             help="warns of files to be deleted if sync enabled")
+    parser.add_argument('-t', '--time_file', dest='time_file',
+            help="file containing reference times to avoid creating file if only the metadata was updated")
     parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='print status output')
     parser.add_argument('--debug', dest='debug', action='store_true', help='print debug output')
     args = parser.parse_args()
@@ -432,10 +467,18 @@ if __name__ == "__main__":
     if args.debug or args.verbose:
         print("Creating PDFs and Directories...")
 
-    files_to_create = root.create_structure(args.source_dir, args.dest_dir, args.debug or args.verbose)
+    if args.time_file:
+        time_ref = read_time_file(args.time_file)
+    else:
+        time_ref = None
+
+    files_to_create = root.create_structure(args.source_dir, args.dest_dir, args.debug or args.verbose, time_ref)
     num_files = len(files_to_create)
 
     num_pages, elapsed_time = create_pdfs(files_to_create)
+
+    if args.time_file:
+        write_time_file(time_ref, args.time_file)
 
     if args.sync or args.sync_warn:
         root.delete_extra_files(args.dest_dir, args.verbose, args.sync_warn)
