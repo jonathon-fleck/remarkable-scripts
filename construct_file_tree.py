@@ -180,18 +180,25 @@ class GraphNode:
                 src_id = f"{source_dir}/{self.__id}"
                 src_md = f"{src_id}.metadata"
 
-                # Script: check if pdf doesn't exist or metadata file is newer -- update this with better check...
+                # If no time_ref, thie file has no time (should not happen), or id not recorded in time_ref use default
                 if (time_ref is None) or (self.__last_modified is None) or (self.__id not in time_ref.keys()):
+                    # Script: check if pdf doesn't exist or metadata file is newer
                     script = f"PROCESS=0; if [ ! -s {pdf} ] || [ {src_md} -nt {pdf} ]; then PROCESS=1; fi; exit $PROCESS"
                     update = os.system(script)
                 else:
-                    update = time_ref[self.__id] > self.__last_modified
+                    if type(time_ref[self.__id]) is not dict:
+                        update = time_ref[self.__id] > self.__last_modified
+                    else:
+                        update = time_ref[self.__id]['time'] > self.__last_modified
+
+                        if (not update) and time_ref[self.__id]['path'] != full_path_str:
+                            os.rename(time_ref[self.__id]['path'], full_path_str)
 
                 if time_ref is not None:
-                    time_ref[self.__id] = self.__last_modified
+                    time_ref[self.__id] = {'time': self.__last_modified, 'path': full_path_str}
 
                 if update:
-                    num_pages = int(subprocess.check_output(f"ls {src_id} | wc -l", shell=True) / 2)
+                    num_pages = int(subprocess.check_output(f"ls {src_id} | wc -l", shell=True)) // 2
                     fileinfo_to_create.append((pdf, err, src_id, num_pages))
 
             else:
@@ -376,7 +383,7 @@ def read_time_file(f_name):
 
 def write_time_file(time_ref, f_name):
     with open(f_name, "w") as f:
-        json.dump(time_ref, f, indent="")
+        json.dump(time_ref, f, indent=4)
 
 def signal_handler(signal, frame):
     sys.exit(0)
