@@ -180,19 +180,17 @@ class GraphNode:
                 src_id = f"{source_dir}/{self.__id}"
                 src_md = f"{src_id}.metadata"
 
-                # If no time_ref, thie file has no time (should not happen), or id not recorded in time_ref use default
-                if (time_ref is None) or (self.__last_modified is None) or (self.__id not in time_ref.keys()):
+                # If no time_ref or id not recorded in time_ref use default
+                if (time_ref is None) or (self.__id not in time_ref.keys()):
                     # Script: check if pdf doesn't exist or metadata file is newer
                     script = f"PROCESS=0; if [ ! -s {pdf} ] || [ {src_md} -nt {pdf} ]; then PROCESS=1; fi; exit $PROCESS"
                     update = os.system(script)
                 else:
-                    if type(time_ref[self.__id]) is not dict:
-                        update = time_ref[self.__id] > self.__last_modified
-                    else:
-                        update = time_ref[self.__id]['time'] > self.__last_modified
+                    # update if last logged time is older (i.e., less) than last modified time
+                    update = time_ref[self.__id]['time'] < self.__last_modified
 
-                        if (not update) and time_ref[self.__id]['path'] != full_path_str:
-                            os.rename(time_ref[self.__id]['path'], full_path_str)
+                    if (not update) and time_ref[self.__id]['path'] != full_path_str:
+                        os.rename(time_ref[self.__id]['path'], full_path_str)
 
                 if time_ref is not None:
                     time_ref[self.__id] = {'time': self.__last_modified, 'path': full_path_str}
@@ -382,7 +380,7 @@ def read_time_file(f_name):
     return time_ref
 
 def write_time_file(time_ref, f_name):
-    with open(f_name, "w") as f:
+    with open(f'new_{f_name}', "w") as f:
         json.dump(time_ref, f, indent=4)
 
 def signal_handler(signal, frame):
@@ -422,7 +420,8 @@ def resolve_cmdline_args():
             help='path to (copy of) remarkable xochitl folder')
     parser.add_argument('-d', '--dest', dest='dest_dir',
             help='path to where you want the new file tree')
-    parser.add_argument('--sync', action='store_true', dest='sync', help="deletes extra files in dest_dir")
+    parser.add_argument('--nosync', action='store_true', dest='no_sync',
+            help="does not delete extra files in dest_dir")
     parser.add_argument('--sync_warn', action='store_true', dest='sync_warn',
             help="warns of files to be deleted if sync enabled")
     parser.add_argument('-t', '--time_file', dest='time_file',
@@ -487,7 +486,7 @@ if __name__ == "__main__":
     if args.time_file:
         write_time_file(time_ref, args.time_file)
 
-    if args.sync or args.sync_warn:
+    if not args.no_sync or args.sync_warn:
         root.delete_extra_files(args.dest_dir, args.verbose, args.sync_warn)
 
     if num_files > 0:
