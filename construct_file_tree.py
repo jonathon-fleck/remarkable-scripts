@@ -193,7 +193,12 @@ class GraphNode:
                         os.rename(time_ref[self.__id]['path'], full_path_str)
 
                 if time_ref is not None:
-                    time_ref[self.__id] = {'time': self.__last_modified, 'path': full_path_str}
+                    if self.__id not in time_ref:
+                        time_ref[self.__id] = {'last_time': None, 'last_path': None}
+                    else:
+                        time_ref[self.__id] = {'last_time': time_ref[self.__id]['time'], 'last_path': time_ref[self.__id]['path']}
+
+                    time_ref[self.__id].update({'time': self.__last_modified, 'path': full_path_str, 'updated': update})
 
                 if update:
                     num_pages = int(subprocess.check_output(f"ls {src_id} | wc -l", shell=True)) // 2
@@ -380,7 +385,7 @@ def read_time_file(f_name):
     return time_ref
 
 def write_time_file(time_ref, f_name):
-    with open(f'new_{f_name}', "w") as f:
+    with open(f_name, "w") as f:
         json.dump(time_ref, f, indent=4)
 
 def signal_handler(signal, frame):
