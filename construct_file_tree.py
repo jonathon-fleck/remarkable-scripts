@@ -2,7 +2,7 @@
 # TODO : GraphNode changes (plus rename to 'RemarkableTreeNode' or something like this...)
 # TODO : add support for remote source (i.e., the remarkable...)
 
-import json, sys, os, signal, argparse, configparser, time
+import json, sys, os, signal, argparse, configparser, time, shutil
 import subprocess
 import rmrl
 
@@ -164,21 +164,14 @@ class GraphNode:
 
         fileinfo_to_create = []
         if not self.is_deleted():
-            if self.__children is None:
-                # Then this represents a file
-
-                full_path_str = f"{self.__name}.pdf"
-
-                parent_node = self.__parent
-                while parent_node is not None and parent_node.__name != "": # not root
-                    full_path_str = f"{parent_node.__name}/{full_path_str}"
-                    parent_node = parent_node.__parent
+            if self.__children is None: # Then this represents a file
 
                 pdf = f"{dest_dir}/{self.__name}.pdf"
                 err = f"{dest_dir}/{self.__name}.err"
 
                 src_id = f"{source_dir}/{self.__id}"
                 src_md = f"{src_id}.metadata"
+
 
                 # If no time_ref or id not recorded in time_ref use default
                 if (time_ref is None) or (self.__id not in time_ref.keys()):
@@ -189,16 +182,16 @@ class GraphNode:
                     # update if last logged time is older (i.e., less) than last modified time
                     update = time_ref[self.__id]['time'] < self.__last_modified
 
-                    if (not update) and time_ref[self.__id]['path'] != full_path_str:
-                        os.rename(time_ref[self.__id]['path'], full_path_str)
+                    if (not update) and time_ref[self.__id]['pdf'] != pdf and not os.path.isfile(pdf):
+                        os.rename(time_ref[self.__id]['pdf'], pdf)
 
                 if time_ref is not None:
                     if self.__id not in time_ref:
-                        time_ref[self.__id] = {'last_time': None, 'last_path': None}
+                        time_ref[self.__id] = {'last_time': None, 'last_pdf': None}
                     else:
-                        time_ref[self.__id] = {'last_time': time_ref[self.__id]['time'], 'last_path': time_ref[self.__id]['path']}
+                        time_ref[self.__id] = {'last_time': time_ref[self.__id]['time'], 'last_pdf': time_ref[self.__id]['pdf']}
 
-                    time_ref[self.__id].update({'time': self.__last_modified, 'path': full_path_str, 'updated': update})
+                    time_ref[self.__id].update({'time': self.__last_modified, 'pdf': pdf, 'updated': update})
 
                 if update:
                     num_pages = int(subprocess.check_output(f"ls {src_id} | wc -l", shell=True)) // 2
@@ -213,7 +206,7 @@ class GraphNode:
                     new_dir = dest_dir
 
                 if not os.path.isdir(new_dir):
-                    os.system("mkdir %s" % (new_dir))
+                    os.mkdir(new_dir)
 
                 for child in self.__children:
                     fileinfo_to_create.extend(child.create_structure(source_dir, new_dir, verbose, time_ref))
@@ -251,7 +244,8 @@ class GraphNode:
                         print(f"Would remove {f_name} in {dirname}")
                     else:
                         if os.path.isdir(f"{dirname}/{f_name}"):
-                            os.rmdir(f"{dirname}/{f_name}")
+                            #os.rmdir(f"{dirname}/{f_name}")
+                            shutil.rmtree(f"{dirname}/{f_name}")
                         elif os.path.isfile(f"{dirname}/{f_name}"):
                             os.remove(f"{dirname}/{f_name}")
                         else:
