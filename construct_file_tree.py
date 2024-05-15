@@ -2,6 +2,44 @@
 # TODO : GraphNode changes (plus rename to 'RemarkableTreeNode' or something like this...)
 # TODO : add support for remote source (i.e., the remarkable...)
 
+# changes (mk, 5/14/24)
+#  -- sometimes 'deleted' flag is missing. In this case set False as default value in dict
+#  -- due to hacks and (idk), other filetypes .bookm and .zip.part are present. these are
+#     now ignored in get_node_dict()
+#  -- some pdf names include parens and apostrophes. modified system call to put pdf names
+#     into quotes
+#  -- put in an exception handler in case we can't render, prints error thrown
+#  -- replace / with - in visibleName
+#
+# bugz ('')
+#  -- sometimes rmrl can't render: a common exception:
+#
+##  File "/Users/Michael/remarkable-scripts/./construct_file_tree.py", line 490, in <module>
+##    num_pages, elapsed_time = create_pdfs(files_to_create)
+##  File "/Users/Michael/remarkable-scripts/./construct_file_tree.py", line 366, in create_pdfs
+##    output = rmrl.render(src_id, progress_cb=rmrl_cb)
+##  File "/Users/Michael/Library/Python/3.9/lib/python/site-packages/rmrl/render.py", line 157, in render
+##    merge_pages(basepage, rmpage, i in changed_pages, expand_pages)
+##  File "/Users/Michael/Library/Python/3.9/lib/python/site-packages/rmrl/render.py", line 460, in merge_pages
+##    bpage_box = list(map(float, basepage.CropBox
+##  TypeError: 'NoneType' object is not iterable
+#
+#     another one because some pdf parameters are not supported.
+#
+#     files affected: ee0eaef2-ffc0-4f36-be4b-6df199417a31,
+#                     72bdaa73-11ed-4f27-8c11-f14c80d2942f,
+#                     7866f389-07bc-4ed7-b6ee-629ac23315bf,
+#                     7ef5f2ac-bb53-414f-b4a3-d73921f3fc8b
+#
+#  -- setting params in config file isn't robust. eg. if raw files directory has trailing
+#     slash, and can't expand ~
+#  -- i'm seeing that ls can't find some files (a handful) in the raw directory.  Is this
+#     typical?
+#  -- some errors like this: (maybe from weird pdf files?)
+#
+##  [ERROR] tokens.py:226 Expected PDF /name object (line=108410, col=28, token='(The process that creates  ...') 
+##  [ERROR] tokens.py:226 Expected PDF /name object (line=108410, col=300, token='(http://www.codemantra.com)')
+
 import json, sys, os, signal, argparse, configparser, time, shutil
 import subprocess
 import rmrl
@@ -176,7 +214,7 @@ class GraphNode:
                 # If no time_ref or id not recorded in time_ref use default
                 if (time_ref is None) or (self.__id not in time_ref.keys()):
                     # Script: check if pdf doesn't exist or metadata file is newer
-                    script = f"PROCESS=0; if [ ! -s {pdf} ] || [ {src_md} -nt {pdf} ]; then PROCESS=1; fi; exit $PROCESS"
+                    script = f'PROCESS=0; if [ ! -s "{pdf}" ] || [ {src_md} -nt "{pdf}" ]; then PROCESS=1; fi; exit $PROCESS'
                     update = os.system(script)
                 else:
                     # update if last logged time is older (i.e., less) than last modified time
@@ -275,8 +313,10 @@ def construct_node(ident, source_dir):
 
     meta_data = json.loads(data)
 
-    return GraphNode(ident, meta_data['visibleName'].replace(' ', '_'), meta_data['type'],
-            meta_data['deleted'], meta_data['parent'], int(meta_data['lastModified']))
+    return GraphNode(ident, meta_data['visibleName'].replace(' ', '_').replace('/','-'),
+                         meta_data['type'],
+            meta_data.get('deleted',False), meta_data['parent'],
+            int(meta_data['lastModified']))
 
 def get_node_dict(source_dir):
     """
@@ -291,8 +331,14 @@ def get_node_dict(source_dir):
     node_dict = {}
 
     for name in os.listdir(source_dir):
-        ident = os.path.basename(name).split('.')[0]
-        if len(ident) > 0 and ident not in node_dict:
+
+        try:
+            ident,ext = os.path.basename(name).split('.')[:2]
+        except ValueError:
+            ident = os.path.basename(name)
+            ext = None
+            
+        if len(ident) > 0 and ident not in node_dict and ext not in ('bookm','zip'):
             node_dict[ident] = construct_node(ident, source_dir)
 
     return node_dict
@@ -356,10 +402,13 @@ def create_pdfs(fileinfo_to_create):
 
             printProgressBar(est_num_pages_gend, total_num_pages, prefix=f"{pdf_str:23} (ETR: {etr_str})", length=75-len(etr_str))
 
-        output = rmrl.render(src_id, progress_cb=rmrl_cb)
-        with open(pdf, "wb") as f:
-            f.write(output.read())
-
+        try:    
+            output = rmrl.render(src_id, progress_cb=rmrl_cb)
+            with open(pdf, "wb") as f:
+                f.write(output.read())
+        except Exception as e:
+            print("Unable to render {}\n{}".format(src_id,e))
+            
         #new_pages_gend = int(subprocess.check_output(f"pdfinfo {pdf} | grep Pages | sed 's/[^0-9]*//'", shell=True))
         #total_pages_gend += new_pages_gend
         num_pages_gend += num_pages
