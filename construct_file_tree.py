@@ -1,6 +1,13 @@
 #!/usr/bin/env python3
 # TODO : GraphNode changes (plus rename to 'RemarkableTreeNode' or something like this...)
 # TODO : add support for remote source (i.e., the remarkable...)
+# TODO : add support for saving source and pdf of files no longer on remarkable
+#        (and restoring on remarkable thereafter)
+"""
+    Test newly change process_extra_files (changed from delete_extra_files)
+        + add calls/inputs for this
+    Test newly changed update.sh to make sure it works as expected (backing up ...)
+"""
 
 import json, sys, os, signal, argparse, configparser, time, shutil
 import subprocess
@@ -147,8 +154,6 @@ class GraphNode:
         """
         Traverses tree and creates a model of the (displayed) filesystem on the remarkable.
 
-        TODO: add functionality for different tools (and review rmrl capabilities)
-
         Parameters
         ----------
         source_dir : str
@@ -173,16 +178,20 @@ class GraphNode:
                 src_md = f"{src_id}.metadata"
 
 
-                # If no time_ref or id not recorded in time_ref use default
+                # If no time_ref or id not recorded in time_ref use default (old version)
                 if (time_ref is None) or (self.__id not in time_ref.keys()):
                     # Script: check if pdf doesn't exist or metadata file is newer
                     script = f"PROCESS=0; if [ ! -s {pdf} ] || [ {src_md} -nt {pdf} ]; then PROCESS=1; fi; exit $PROCESS"
                     update = os.system(script)
                 else:
-                    # update if last logged time is older (i.e., less) than last modified time
-                    update = time_ref[self.__id]['time'] < self.__last_modified
+                    # update if last logged time is older (i.e., less) than last modified time or if no file
+                    # exists at last registered location
+                    update = (time_ref[self.__id]['time'] < self.__last_modified) or \
+                            (not os.path.isfile(time_ref[self.__id]['pdf']))
 
-                    if (not update) and time_ref[self.__id]['pdf'] != pdf and not os.path.isfile(pdf):
+                    # If above did not flag update, file locations are different, and new location is not
+                    # a file, change the name locally
+                    if (not update) and time_ref[self.__id]['pdf'] != pdf and (not os.path.isfile(pdf)):
                         os.rename(time_ref[self.__id]['pdf'], pdf)
 
                 if time_ref is not None:
@@ -213,9 +222,12 @@ class GraphNode:
 
         return fileinfo_to_create
 
-    def delete_extra_files(self, dirname, verbose=False, warn_only=False):
+    def process_extra_files(self, dirname, verbose=False, warn_only=True, archive_dir=None):
         """
-        Deletes extra files in dest folder.
+        TESTME!!!
+
+        Traverses directory and deletes (or archives) unexepected files/directories below
+        dirname.
 
         Parameters
         ----------
@@ -225,11 +237,17 @@ class GraphNode:
             If true prints info about each deletion
         warn_only : bool
             If true, only prints which files would be deleted
+        archive_dir : str
+            Directory of filesystem to move unexepcted files to instead of deleting them
+            (if None, then the files will be deleted)
         """
         if self.__children is not None:
             filenames = os.listdir(dirname)
             for f_name in filenames:
-                f_basename = f_name.split('.')[0]
+                if f_name.endswith(".pdf"):
+                    f_basename = f_name[:-4]
+                else:
+                    f_basename = f_name
 
                 i=0
                 while i < len(self.__children) and self.__children[i].__name != f_basename:
@@ -238,21 +256,33 @@ class GraphNode:
 
                 if not found:
                     if verbose:
-                        print(f"Removing {f_name}... in {dirname}")
+                        print(f"Removing {f_name} in {dirname}...")
 
                     if warn_only:
                         print(f"Would remove {f_name} in {dirname}")
                     else:
-                        if os.path.isdir(f"{dirname}/{f_name}"):
-                            #os.rmdir(f"{dirname}/{f_name}")
-                            shutil.rmtree(f"{dirname}/{f_name}")
-                        elif os.path.isfile(f"{dirname}/{f_name}"):
-                            os.remove(f"{dirname}/{f_name}")
+                        # NEW CODE ----------------------\/
+                        if archive_dir is None:
+                            if os.path.isdir(f"{dirname}/{f_name}"):
+                                #os.rmdir(f"{dirname}/{f_name}")
+                                shutil.rmtree(f"{dirname}/{f_name}")
+                            elif os.path.isfile(f"{dirname}/{f_name}"):
+                                os.remove(f"{dirname}/{f_name}")
+                            else:
+                                print(f"Unexpected file type for {dirname}/{f_name}!")
                         else:
-                            print(f"Unexpected file type for {dirname}/{f_name}!")
+                            if not os.path.isdir(archive_dir):
+                                os.makedirs(archive_dir)
+                            shutil.move(f"{dirname}/{f_name}", f"{archive_dir}/{f_name}")
+                        # END NEW CODE -------------------/\
 
             for child in self.__children:
-                child.delete_extra_files(f"{dirname}/{child.__name}")
+                if archive_dir is not None:
+                    new_archive_dir = f"{archive_dir}/{child.__name}"
+                else:
+                    new_archive_dir = None
+                child.process_extra_files(f"{dirname}/{child.__name}", verbose, warn_only,
+                        archive_dir=new_archive_dir)
 
 def construct_node(ident, source_dir):
     """
@@ -453,6 +483,13 @@ def resolve_cmdline_args():
         print("You must specify a destination directory file or list it in your " +\
                 "~/.remarkable_params.sh file")
         invalid_args = True
+    if args.time_file is None:
+        if os.path.isfile("time_file.json"):
+            args.time_file = "time_file.json"
+        else:
+            response = input("No time file found, would you like to proceed without one? [y/n]")
+            if response.lower() != "y":
+                invalid_args = True
 
     if invalid_args:
         exit(1)
@@ -486,7 +523,7 @@ if __name__ == "__main__":
         write_time_file(time_ref, args.time_file)
 
     if not args.no_sync or args.sync_warn:
-        root.delete_extra_files(args.dest_dir, args.verbose, args.sync_warn)
+        root.process_extra_files(args.dest_dir, args.verbose, args.sync_warn)
 
     if num_files > 0:
         time_per_page = elapsed_time / num_pages
